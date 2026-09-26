@@ -469,3 +469,7 @@ mod tests;
 #[cfg(all(test, target_os = "android"))]
 #[path = "android_devices_tests.rs"]
 mod android_tests;
+
+#[cfg(all(test, target_os = "android"))]
+#[path = "android_playout_tests.rs"]
+mod android_playout_tests;

@@ -85,7 +85,7 @@ fn unexpected_flush_cancels_a_blocked_speaker_write() {
     let port = PlaybackPort::new(buffers.clone(), /*rate*/ 48_000);
     let sink = Sink::new(port.writer());
     sink.set_state(gst::State::Playing).unwrap();
-    let capacity = if cfg!(target_os = "linux") {
+    let capacity = if cfg!(any(target_os = "linux", target_os = "android")) {
         4_800
     } else {
         1_920

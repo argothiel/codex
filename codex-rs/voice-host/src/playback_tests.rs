@@ -35,7 +35,11 @@ fn partial_writes_account_for_samples_until_the_device_consumes_them() {
 fn suppression_cancels_a_full_writer_and_old_writers_cannot_resume() {
     let (buffers, port, writer) = active(/*rate*/ 8000);
     let bytes = vec![0; BLOCK * 4];
-    for _ in 0..if cfg!(target_os = "linux") { 3 } else { 1 } {
+    for _ in 0..if cfg!(any(target_os = "linux", target_os = "android")) {
+        3
+    } else {
+        1
+    } {
         writer.write(&bytes).unwrap();
     }
     let waiting = std::thread::spawn(move || writer.write(&bytes));
@@ -79,7 +83,11 @@ fn invalid_samples_fail_but_stalled_consumption_drops_and_resumes() {
         writer.write(&f32::NAN.to_le_bytes()),
         Err("invalid speaker sample")
     );
-    let blocks = if cfg!(target_os = "linux") { 3 } else { 1 };
+    let blocks = if cfg!(any(target_os = "linux", target_os = "android")) {
+        3
+    } else {
+        1
+    };
     for _ in 0..blocks {
         writer.write(&vec![0; BLOCK * 4]).unwrap();
     }

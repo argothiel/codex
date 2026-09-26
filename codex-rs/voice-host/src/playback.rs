@@ -80,9 +80,14 @@ impl PlaybackWriter {
             .map_err(|_| "speaker writer failed")?;
         let deadline = Instant::now() + Duration::from_millis(/*millis*/ 100);
         let buffers = &self.state.buffers;
-        // Linux requests 50 ms callbacks; retain two callbacks of audio so a
-        // callback can fill without racing the producer. Keep the queue cap.
-        let windows_per_second = if cfg!(target_os = "linux") { 10 } else { 25 };
+        // Linux requests 50 ms callbacks. Android's mixer and decoder can deliver
+        // bursts too; retain 100 ms so callbacks do not race the producer.
+        // Keep the queue capacity as the upper bound.
+        let windows_per_second = if cfg!(any(target_os = "linux", target_os = "android")) {
+            10
+        } else {
+            25
+        };
         let limit = (self.state.rate / windows_per_second)
             .min((BLOCK * buffers.playback.capacity()) as u32);
         loop {
