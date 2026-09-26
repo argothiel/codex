@@ -593,6 +593,31 @@ ignored = [
 # across local dev builds.
 debug = "limited"
 
+# Real-time audio must meet capture deadlines even in development builds.
+[profile.dev.package.sonora]
+opt-level = 3
+
+[profile.dev.package.sonora-aec3]
+opt-level = 3
+
+[profile.dev.package.sonora-agc2]
+opt-level = 3
+
+[profile.dev.package.sonora-common-audio]
+opt-level = 3
+
+[profile.dev.package.sonora-fft]
+opt-level = 3
+
+[profile.dev.package.sonora-ns]
+opt-level = 3
+
+[profile.dev.package.sonora-simd]
+opt-level = 3
+
+[profile.dev.package.rubato]
+opt-level = 3
+
 [profile.dev-small]
 inherits = "dev"
 opt-level = 0

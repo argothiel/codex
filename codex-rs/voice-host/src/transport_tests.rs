@@ -1,6 +1,10 @@
 #[path = "transport_network_tests.rs"]
 mod network;
 
+#[cfg(target_os = "android")]
+#[path = "android_transport_tests.rs"]
+mod android;
+
 use super::*;
 use pretty_assertions::assert_eq;
 use tokio::sync::mpsc;
