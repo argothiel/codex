@@ -26,6 +26,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
     parser.add_argument("--helper-only", action="store_true")
+    parser.add_argument("--cli-artifact", type=Path)
     args = parser.parse_args()
     output = args.output.absolute()
     output.mkdir(parents=True, exist_ok=False)
@@ -50,9 +51,16 @@ def main():
         name = f"libgst{plugin}.so"
         copy(prefix / "lib/gstreamer-1.0" / name, libraries / "gstreamer-1.0" / name)
     if not args.helper_only:
-        copy(build / "codex", output / "bin/codex")
+        cli = args.cli_artifact / "bin/codex" if args.cli_artifact else build / "codex"
+        copy(cli, output / "bin/codex")
+        (output / "bin/codex").chmod(0o700)
         copy(build / "codex-code-mode-host", output / "bin/codex-code-mode-host")
-        cpp = prefix / "lib/node_modules/@mmmbuto/codex-cli-termux/bin/libc++_shared.so"
+        cpp = (
+            args.cli_artifact / "bin/libc++_shared.so"
+            if args.cli_artifact
+            else prefix
+            / "lib/node_modules/@mmmbuto/codex-cli-termux/bin/libc++_shared.so"
+        )
         copy(cpp, output / "bin/libc++_shared.so")
         launcher = output / "run-codex"
         launcher.write_text(
