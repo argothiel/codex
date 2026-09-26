@@ -50,6 +50,13 @@ impl Runtime {
                 "libgst",
                 ".dylib",
             )
+        } else if cfg!(target_os = "android") {
+            (
+                "lib/libgstreamer-1.0.so",
+                "lib/gstreamer-1.0",
+                "libgst",
+                ".so",
+            )
         } else if cfg!(all(target_os = "linux", target_env = "gnu")) {
             (
                 "lib/libgstreamer-1.0.so.0",

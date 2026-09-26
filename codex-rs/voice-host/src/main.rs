@@ -4,6 +4,7 @@
 // Non-native helper targets negotiate transport but have no device backend to send audio.
 #[cfg_attr(
     not(any(
+        target_os = "android",
         target_os = "macos",
         all(target_os = "linux", target_env = "gnu"),
         all(windows, target_env = "msvc")
@@ -13,6 +14,7 @@
 mod audio_track;
 #[cfg_attr(
     not(any(
+        target_os = "android",
         target_os = "macos",
         all(target_os = "linux", target_env = "gnu"),
         all(windows, target_env = "msvc")

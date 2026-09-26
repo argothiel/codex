@@ -84,12 +84,18 @@ impl Devices {
         let output = host
             .default_output_device()
             .ok_or_else(|| io::Error::other("speaker unavailable"))?;
+        #[cfg(not(target_os = "android"))]
         let input_config = input
             .default_input_config()
             .map_err(|_| io::Error::other("microphone configuration unavailable"))?;
+        #[cfg(not(target_os = "android"))]
         let output_config = output
             .default_output_config()
             .map_err(|_| io::Error::other("speaker configuration unavailable"))?;
+        #[cfg(target_os = "android")]
+        let input_config = android_config();
+        #[cfg(target_os = "android")]
+        let output_config = android_config();
         let input_stream_config = bounded_stream_config(&input_config)?;
         let output_stream_config = bounded_stream_config(&output_config)?;
         let buffers = Arc::new(Buffers::new(
@@ -173,10 +179,13 @@ impl Devices {
             // Opening a Bluetooth microphone can change the speaker's format.
             // Requery after stopping the old stream rather than restoring its
             // pre-microphone rate, which the device may no longer support.
+            #[cfg(not(target_os = "android"))]
             let output_config = self
                 .output_device
                 .default_output_config()
                 .map_err(|_| io::Error::other("speaker configuration unavailable"))?;
+            #[cfg(target_os = "android")]
+            let output_config = android_config();
             let output_stream_config = bounded_stream_config(&output_config)?;
             let cpal::BufferSize::Fixed(output_frames) = output_stream_config.buffer_size else {
                 return Err(io::Error::other("audio callback size unavailable"));
@@ -237,6 +246,21 @@ impl Drop for Devices {
         drop(self.playout.take());
         let _producer = self.playback.0.producer.lock().ok();
     }
+}
+
+// AAudio default-device discovery exposes an unknown buffer range and broad
+// format guesses. Request the format proven on Android; open failure stays fatal.
+#[cfg(target_os = "android")]
+fn android_config() -> cpal::SupportedStreamConfig {
+    cpal::SupportedStreamConfig::new(
+        /*channels*/ 1,
+        /*sample_rate*/ 48_000,
+        cpal::SupportedBufferSize::Range {
+            min: 1,
+            max: MAX_CALLBACK_FRAMES as u32,
+        },
+        cpal::SampleFormat::F32,
+    )
 }
 
 fn bounded_stream_config(
@@ -441,3 +465,7 @@ fn render_output<T>(
 #[cfg(test)]
 #[path = "devices_tests.rs"]
 mod tests;
+
+#[cfg(all(test, target_os = "android"))]
+#[path = "android_devices_tests.rs"]
+mod android_tests;

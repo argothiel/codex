@@ -79,6 +79,15 @@ pub fn package(test: &str) -> Result<Option<PathBuf>> {
     fs::write(root.join("codex-package.json"), "{}")?;
     fs::copy(&source, root.join("bin").join(APP))?;
     fs::copy(&source, root.join("codex-resources/voice/bin").join(HELPER))?;
+    #[cfg(target_os = "android")]
+    {
+        let shim = std::path::Path::new("/data/data/com.termux/files/usr/lib/libtermux-exec.so");
+        if shim.is_file() {
+            let libraries = root.join("codex-resources/voice/lib");
+            fs::create_dir_all(&libraries)?;
+            fs::copy(shim, libraries.join("libtermux-exec.so"))?;
+        }
+    }
     let mut child = Command::new(root.join("bin").join(APP))
         .args(["--exact", test, "--nocapture"])
         .current_dir(root)

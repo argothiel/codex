@@ -165,6 +165,24 @@ impl VoiceHost {
             "voice helper must be inside the physical package"
         );
         let environment = child_environment(std::env::vars_os());
+        #[cfg(target_os = "android")]
+        let environment = {
+            let mut environment = environment;
+            environment.insert(
+                "LD_LIBRARY_PATH".to_owned(),
+                root.join("codex-resources/voice/lib")
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+            // Termux starts executables through Android's linker. Its exec shim
+            // restores current_exe, which the helper uses to locate its runtime.
+            // Load only the packaged shim, never an inherited LD_PRELOAD value.
+            let shim = root.join("codex-resources/voice/lib/libtermux-exec.so");
+            if shim.is_file() && shim.canonicalize()? == shim {
+                environment.insert("LD_PRELOAD".to_owned(), shim.to_string_lossy().into_owned());
+            }
+            environment
+        };
         #[cfg(target_os = "linux")]
         let environment = {
             let mut environment = environment;

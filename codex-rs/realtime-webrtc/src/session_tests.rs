@@ -134,6 +134,8 @@ fn package_availability_requires_helper_and_native_runtime() {
     assert!(!package_has_runtime(&root));
     let runtime = voice.join(if cfg!(target_os = "macos") {
         "lib/libgstreamer-1.0.0.dylib"
+    } else if cfg!(target_os = "android") {
+        "lib/libgstreamer-1.0.so"
     } else if cfg!(windows) {
         "bin/gstreamer-1.0-0.dll"
     } else {

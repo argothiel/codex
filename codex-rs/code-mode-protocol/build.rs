@@ -3,9 +3,14 @@ use std::path::PathBuf;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rustc-check-cfg=cfg(codex_bazel)");
     println!("cargo:rerun-if-changed=src/grpc");
+    println!("cargo:rerun-if-env-changed=PROTOC");
 
     let mut config = tonic_prost_build::Config::new();
-    config.protoc_executable(protoc_bin_vendored::protoc_bin_path()?);
+    let protoc = match std::env::var_os("PROTOC") {
+        Some(path) => PathBuf::from(path),
+        None => protoc_bin_vendored::protoc_bin_path()?,
+    };
+    config.protoc_executable(protoc);
     let proto_files = glob::glob("src/grpc/*.proto")?.collect::<Result<Vec<_>, _>>()?;
 
     tonic_prost_build::configure()

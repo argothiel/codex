@@ -80,6 +80,7 @@ impl AudioTrack {
     /// Send only synthetic silence while muted, never a device or processing buffer.
     /// Reuse the encoded packet and pace it by the same RTP clock as live capture.
     #[cfg(any(
+        target_os = "android",
         target_os = "macos",
         all(target_os = "linux", target_env = "gnu"),
         all(windows, target_env = "msvc")

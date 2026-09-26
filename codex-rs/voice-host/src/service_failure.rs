@@ -3,6 +3,7 @@
 #[derive(Debug)]
 #[cfg_attr(
     not(any(
+        target_os = "android",
         target_os = "macos",
         all(target_os = "linux", target_env = "gnu"),
         all(windows, target_env = "msvc")

@@ -30,6 +30,11 @@ webrtc = "=0.20.3"
 
 [target.'cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"), all(windows, target_env = "msvc")))'.dependencies]
 cpal = "=0.18.2"
+
+[target.'cfg(target_os = "android")'.dependencies]
+cpal = { version = "=0.18.2", features = ["android-headless"] }
+
+[target.'cfg(any(target_os = "android", target_os = "macos", all(target_os = "linux", target_env = "gnu"), all(windows, target_env = "msvc")))'.dependencies]
 crossbeam-queue = "0.3.12"
 gstreamer = { version = "=0.25.3", features = ["v1_28"] }
 gstreamer-app = { version = "=0.25.2", features = ["v1_28"] }
