@@ -664,5 +664,5 @@ async fn paraphrased_accepted_answers_do_not_replay_after_sixteen_turns() {
         .map(|line| line.to_string())
         .filter(|line| line.starts_with("Canonical answer"))
         .collect::<Vec<_>>();
-    insta::assert_debug_snapshot!("accepted_voice_answers_not_replayed", replayed, @"[]");
+    insta::assert_debug_snapshot!(replayed, @"[]");
 }
