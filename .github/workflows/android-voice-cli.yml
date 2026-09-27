@@ -17,6 +17,49 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  tui-tests:
+    name: Voice UI regression tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_JOBS: "4"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libssl-dev libcap-dev libasound2-dev protobuf-compiler bubblewrap
+          rustup toolchain install 1.95.0 --profile minimal --component rustfmt
+
+      - uses: taiki-e/install-action@44c6d64aa62cd779e873306675c7a58e86d6d532
+        with:
+          tool: just@1.51.0,cargo-nextest@0.9.146
+
+      - name: Restore test cache
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            codex-rs/target
+          key: voice-tui-tests-1.95-${{ hashFiles('codex-rs/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            voice-tui-tests-1.95-${{ hashFiles('codex-rs/Cargo.lock') }}-
+
+      - name: Check Rust formatting
+        working-directory: codex-rs
+        run: cargo fmt -p codex-tui -- --check --config imports_granularity=Item
+
+      - name: Run TUI tests
+        working-directory: codex-rs
+        run: just test -p codex-tui
+
   cli:
     runs-on: ubuntu-24.04
     timeout-minutes: 120

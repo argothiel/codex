@@ -136,7 +136,7 @@ async fn in_progress_voice_replay_restores_the_late_reasoning_guard() {
 }
 
 #[tokio::test]
-async fn accepted_voice_answer_with_only_an_old_caption_returns_to_history_on_close() {
+async fn accepted_voice_answer_with_only_an_old_caption_is_preserved_immediately() {
     let (mut chat, _sender, mut events, mut ops) = make_chatwidget_manual_with_sender().await;
     let thread_id = activate_voice(&mut chat);
     let turn_id = "accepted-turn";
@@ -165,7 +165,7 @@ async fn accepted_voice_answer_with_only_an_old_caption_returns_to_history_on_cl
     chat.realtime_conversation.assistant_transcript_generation =
         Some(chat.realtime_conversation.input_generation.wrapping_sub(1));
     chat.on_realtime_transcript_done("assistant".into(), "Earlier speech".into());
-    assert_eq!(chat.realtime_conversation.pending_speech.len(), 1);
+    assert!(chat.realtime_conversation.pending_speech.is_empty());
     chat.on_realtime_conversation_closed(Some("transport_closed".into()));
     chat.restore_undelivered_realtime_speech(delivery_id);
     let mut answers = 0;
@@ -211,7 +211,7 @@ async fn unrelated_caption_started_before_speech_queue_keeps_answer_fallback() {
     while events.try_recv().is_ok() {}
     chat.accept_realtime_speech(delivery_id);
     chat.on_realtime_transcript_done("assistant".into(), "Unrelated caption".into());
-    assert_eq!(chat.realtime_conversation.pending_speech.len(), 1);
+    assert!(chat.realtime_conversation.pending_speech.is_empty());
     chat.on_realtime_conversation_closed(Some("transport_closed".into()));
     let restored = std::iter::from_fn(|| events.try_recv().ok())
         .filter_map(|event| match event {
@@ -261,7 +261,7 @@ async fn done_only_caption_cannot_retire_a_newer_voice_answer() {
             .is_none()
     );
     chat.on_realtime_transcript_done("assistant".into(), "Old done-only caption".into());
-    assert_eq!(chat.realtime_conversation.pending_speech.len(), 1);
+    assert!(chat.realtime_conversation.pending_speech.is_empty());
     chat.on_realtime_conversation_closed(Some("transport_closed".into()));
     let restored = std::iter::from_fn(|| events.try_recv().ok())
         .filter_map(|event| match event {

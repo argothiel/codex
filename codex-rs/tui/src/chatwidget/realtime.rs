@@ -1096,17 +1096,21 @@ impl ChatWidget {
     }
 
     pub(crate) fn accept_realtime_speech(&mut self, delivery_id: u64) {
-        if let Some(delivery) = self
+        if let Some(index) = self
             .realtime_conversation
             .pending_speech
-            .iter_mut()
-            .find(|delivery| delivery.state == PendingSpeechState::Queued(delivery_id))
+            .iter()
+            .position(|delivery| delivery.state == PendingSpeechState::Queued(delivery_id))
+            && let Some(mut delivery) = self.realtime_conversation.pending_speech.remove(index)
         {
             delivery.state = PendingSpeechState::Accepted;
+            // Acceptance confirms queueing, not audible delivery. Preserve the
+            // answer in history now unless its exact caption already did so.
+            // Voice may paraphrase it, so waiting for a matching caption leaves
+            // accepted answers in the recovery queue until overflow replays them
+            // many turns later. Failed RPCs still use the recovery path below.
+            self.restore_realtime_speech(delivery);
         }
-        self.realtime_conversation
-            .pending_speech
-            .retain(|delivery| !delivery.captioned);
     }
 
     pub(crate) fn restore_undelivered_realtime_speech(&mut self, delivery_id: u64) {
