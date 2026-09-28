@@ -41,6 +41,16 @@ pub(crate) fn commit_realtime_history_events(
     let mut forwarded = Vec::new();
     while let Ok(event) = events.try_recv() {
         match event {
+            AppEvent::ConsolidateAgentMessage {
+                deferred_history_cell,
+                ..
+            } => {
+                if let Some(cell) = deferred_history_cell {
+                    forwarded.push(AppEvent::InsertHistoryCell(cell));
+                }
+                chat.note_stream_consolidation_completed();
+                chat.flush_realtime_transcript_history();
+            }
             AppEvent::CommitRealtimeTranscriptHistory => forwarded.extend(
                 chat.take_realtime_transcript_history()
                     .into_iter()

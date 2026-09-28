@@ -2,8 +2,10 @@
 //! Completed captions and both speakers' partials stay bounded across widget replacement.
 //! Interleaved speakers retain separate displays so settled caption text never reanimates.
 //! Speech recovery suppresses stale queued answers while preserving unspoken text fallbacks.
+//! Accepted speech preserves the full current answer immediately, even when voice paraphrases it.
 
 mod recording_controls;
+mod speech_history;
 mod transcript_replay;
 
 use super::ChatWidget;
@@ -177,6 +179,7 @@ pub(super) struct RealtimeConversationUiState {
     delegated_reasoning_turns: VecDeque<String>,
     pub(super) agent_items: HashMap<(String, String), RealtimeAgentItemOrigin>,
     pending_speech: VecDeque<PendingRealtimeSpeech>,
+    rendered_speech: VecDeque<speech_history::RenderedSpeech>,
 }
 
 impl RealtimeConversationUiState {
@@ -1121,17 +1124,21 @@ impl ChatWidget {
     }
 
     pub(crate) fn accept_realtime_speech(&mut self, delivery_id: u64) {
-        if let Some(delivery) = self
+        if let Some(index) = self
             .realtime_conversation
             .pending_speech
-            .iter_mut()
-            .find(|delivery| delivery.state == PendingSpeechState::Queued(delivery_id))
+            .iter()
+            .position(|delivery| delivery.state == PendingSpeechState::Queued(delivery_id))
+            && let Some(mut delivery) = self.realtime_conversation.pending_speech.remove(index)
         {
             delivery.state = PendingSpeechState::Accepted;
+            // Acceptance confirms queueing, not audible delivery. Preserve the
+            // answer in history now unless its exact caption already did so.
+            // Voice may paraphrase it, so a matching caption might never arrive.
+            // Keep accepted answers out of the recovery queue; failed RPCs still
+            // use the recovery path below.
+            self.restore_realtime_speech(delivery);
         }
-        self.realtime_conversation
-            .pending_speech
-            .retain(|delivery| !delivery.captioned);
     }
 
     pub(crate) fn restore_undelivered_realtime_speech(&mut self, delivery_id: u64) {
@@ -1160,6 +1167,11 @@ impl ChatWidget {
         {
             return;
         }
+        // Preserve the spoken question's position before inserting its full answer.
+        for cell in self.take_realtime_transcript_history() {
+            self.app_event_tx.send(AppEvent::InsertHistoryCell(cell));
+        }
+        self.remember_rendered_realtime_speech(&delivery);
         self.forget_realtime_turn_origin(&delivery.turn_id);
         self.handle_thread_item(
             delivery.item,
@@ -1361,6 +1373,9 @@ impl ChatWidget {
     }
 
     pub(super) fn on_realtime_transcript_done(&mut self, role: String, mut text: String) {
+        if role == "assistant" && self.is_rendered_realtime_speech(&text) {
+            text.clear();
+        }
         if matches!(
             self.realtime_conversation.phase,
             RealtimeConversationPhase::Inactive | RealtimeConversationPhase::Stopping
@@ -1848,6 +1863,7 @@ impl ChatWidget {
             attempt_id: self.realtime_conversation.attempt_id,
             // Keep parked speech tied to its input until it is taken for replay.
             input_generation: self.realtime_conversation.input_generation,
+            rendered_speech: std::mem::take(&mut self.realtime_conversation.rendered_speech),
             pending_speech: std::mem::take(&mut self.realtime_conversation.pending_speech),
             pending_history_cells,
             accepted_transcripts,
