@@ -76,7 +76,35 @@ async fn paraphrased_voice_answers_do_not_reappear_on_overflow_or_stop() {
 }
 
 #[tokio::test]
-async fn failed_speech_recovers_only_for_the_current_input() {
+async fn completed_answer_survives_a_closed_speech_command_channel() {
+    let (mut chat, _sender, mut events, ops) = make_chatwidget_manual_with_sender().await;
+    let thread_id = activate_voice(&mut chat);
+    let turn_id = "closed-speech-channel";
+    start_item(
+        &mut chat,
+        thread_id,
+        turn_id,
+        user_item("<realtime_delegation><input>question</input></realtime_delegation>"),
+    );
+    let answer = agent_item("answer", "The full answer", Some(MessagePhase::FinalAnswer));
+    start_item(&mut chat, thread_id, turn_id, answer.clone());
+    complete_item(&mut chat, thread_id, turn_id, answer.clone());
+    drop(ops);
+    finish_turn(
+        &mut chat,
+        thread_id,
+        turn_id,
+        vec![answer],
+        TurnStatus::Completed,
+    );
+    commit_realtime_history_events(&mut chat, &mut events);
+    let rendered = history_text(&mut events);
+    assert_eq!(rendered.matches("The full answer").count(), 1);
+    assert!(rendered.contains("Failed to deliver the voice response."));
+}
+
+#[tokio::test]
+async fn failed_speech_does_not_reinsert_published_answers() {
     for superseded in [false, true] {
         let (mut chat, _sender, mut events, mut ops) = make_chatwidget_manual_with_sender().await;
         let thread_id = activate_voice(&mut chat);
@@ -105,20 +133,15 @@ async fn failed_speech_recovers_only_for_the_current_input() {
         else {
             panic!("completed voice turn should queue speech");
         };
+        commit_realtime_history_events(&mut chat, &mut events);
+        assert_eq!(history_text(&mut events), "• Undelivered answer");
         if superseded {
             chat.note_realtime_typed_input("New task");
         }
         while events.try_recv().is_ok() {}
         chat.restore_undelivered_realtime_speech(delivery_id);
         chat.restore_undelivered_realtime_speech(delivery_id);
-        assert_eq!(
-            history_text(&mut events),
-            if superseded {
-                ""
-            } else {
-                "• Undelivered answer"
-            }
-        );
+        assert_eq!(history_text(&mut events), "");
     }
 }
 
@@ -160,7 +183,7 @@ async fn delayed_voice_transcript_preserves_unspoken_text_fallback() {
 }
 
 #[tokio::test]
-async fn queued_voice_answers_return_to_history_once_if_voice_closes_before_delivery() {
+async fn published_answers_remain_in_history_once_if_voice_closes_before_delivery() {
     let (mut chat, _sender, mut events, mut ops) = make_chatwidget_manual_with_sender().await;
     let thread_id = activate_voice(&mut chat);
     let mut deliveries = Vec::new();
@@ -191,8 +214,6 @@ async fn queued_voice_answers_return_to_history_once_if_voice_closes_before_deli
         deliveries.push(delivery_id);
     }
     assert_eq!(chat.realtime_conversation.pending_speech.len(), 2);
-    while events.try_recv().is_ok() {}
-
     chat.stop_realtime_conversation();
     chat.reset_realtime_conversation();
     for delivery_id in deliveries {
@@ -280,7 +301,7 @@ async fn pending_voice_answers_stay_bounded_without_restoring_old_inputs() {
             restored += 1;
         }
     }
-    assert_eq!(restored, 0);
+    assert_eq!(restored, 1);
     assert!(ops.try_recv().is_err());
     chat.stop_realtime_conversation();
     chat.reset_realtime_conversation();
@@ -774,7 +795,7 @@ async fn new_user_input_invalidates_already_queued_voice_speech() {
 }
 
 #[tokio::test]
-async fn paraphrased_accepted_answers_do_not_replay_after_sixteen_turns() {
+async fn completed_answers_are_visible_before_speech_acceptance_and_do_not_replay() {
     let (mut chat, _sender, mut events, mut ops) = make_chatwidget_manual_with_sender().await;
     let thread_id = activate_voice(&mut chat);
     let mut delivered = Vec::new();
@@ -805,8 +826,6 @@ async fn paraphrased_accepted_answers_do_not_replay_after_sixteen_turns() {
         else {
             panic!("completed voice turn should queue speech");
         };
-        while events.try_recv().is_ok() {}
-        chat.accept_realtime_speech(delivery_id);
         let rendered = std::iter::from_fn(|| events.try_recv().ok())
             .filter_map(|event| match event {
                 AppEvent::InsertHistoryCell(cell) => Some(cell.raw_lines()),
@@ -817,6 +836,7 @@ async fn paraphrased_accepted_answers_do_not_replay_after_sixteen_turns() {
             .filter(|line| line.starts_with("Canonical answer"))
             .collect::<Vec<_>>();
         assert_eq!(rendered, vec![text]);
+        chat.accept_realtime_speech(delivery_id);
         chat.on_realtime_transcript_delta("assistant".into(), "Spoken summary".into());
         chat.on_realtime_transcript_done("assistant".into(), format!("Spoken summary {index}"));
         assert!(chat.realtime_conversation.pending_speech.is_empty());

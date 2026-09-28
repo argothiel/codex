@@ -2,7 +2,7 @@
 //! Completed captions and both speakers' partials stay bounded across widget replacement.
 //! Interleaved speakers retain separate displays so settled caption text never reanimates.
 //! Speech recovery suppresses stale queued answers while preserving unspoken text fallbacks.
-//! Accepted speech preserves the full current answer immediately, even when voice paraphrases it.
+//! Completed turns publish their full answer independently of speech queueing or playback.
 
 mod recording_controls;
 mod speech_history;
@@ -68,6 +68,7 @@ static NEXT_REALTIME_SPEECH_DELIVERY_ID: AtomicU64 = AtomicU64::new(1);
 struct PendingRealtimeSpeech {
     state: PendingSpeechState,
     captioned: bool,
+    published: bool,
     input_generation: u64,
     thread_id: ThreadId,
     turn_id: String,
@@ -86,7 +87,6 @@ pub(crate) struct RealtimeTranscriptRecord {
 enum PendingSpeechState {
     AwaitingTurn,
     Queued(u64),
-    Accepted,
 }
 
 fn can_retain_realtime_speech(turn_id: &str, item: &ThreadItem) -> bool {
@@ -817,7 +817,9 @@ impl ChatWidget {
                 .realtime_conversation
                 .pending_speech
                 .iter()
-                .any(|pending| pending.turn_id == turn_id && pending.item.id() == item_id);
+                .any(|pending| {
+                    !pending.published && pending.turn_id == turn_id && pending.item.id() == item_id
+                });
         }
         if !self.is_realtime_delegated_agent_item(turn_id, item_id) {
             return false;
@@ -878,6 +880,7 @@ impl ChatWidget {
             .push_back(PendingRealtimeSpeech {
                 state: PendingSpeechState::AwaitingTurn,
                 captioned: false,
+                published: false,
                 input_generation,
                 thread_id,
                 turn_id: turn_id.to_string(),
@@ -948,11 +951,6 @@ impl ChatWidget {
         {
             self.remove_waiting_realtime_speech(turn_id, item_id);
             self.finish_realtime_turn(turn_id);
-            self.handle_thread_item(
-                item.clone(),
-                turn_id.to_string(),
-                super::ThreadItemRenderSource::Live,
-            );
             return;
         }
         let delivery_id = NEXT_REALTIME_SPEECH_DELIVERY_ID.fetch_add(1, Ordering::Relaxed);
@@ -978,6 +976,7 @@ impl ChatWidget {
                     .push_back(PendingRealtimeSpeech {
                         state: PendingSpeechState::AwaitingTurn,
                         captioned: false,
+                        published: true,
                         input_generation,
                         thread_id,
                         turn_id: turn_id.to_string(),
@@ -1124,21 +1123,9 @@ impl ChatWidget {
     }
 
     pub(crate) fn accept_realtime_speech(&mut self, delivery_id: u64) {
-        if let Some(index) = self
-            .realtime_conversation
+        self.realtime_conversation
             .pending_speech
-            .iter()
-            .position(|delivery| delivery.state == PendingSpeechState::Queued(delivery_id))
-            && let Some(mut delivery) = self.realtime_conversation.pending_speech.remove(index)
-        {
-            delivery.state = PendingSpeechState::Accepted;
-            // Acceptance confirms queueing, not audible delivery. Preserve the
-            // answer in history now unless its exact caption already did so.
-            // Voice may paraphrase it, so a matching caption might never arrive.
-            // Keep accepted answers out of the recovery queue; failed RPCs still
-            // use the recovery path below.
-            self.restore_realtime_speech(delivery);
-        }
+            .retain(|delivery| delivery.state != PendingSpeechState::Queued(delivery_id));
     }
 
     pub(crate) fn restore_undelivered_realtime_speech(&mut self, delivery_id: u64) {
@@ -1160,7 +1147,8 @@ impl ChatWidget {
         // Do not append old queued speech under a newer question. An answer that
         // never reached speech still needs its text fallback: a delayed user
         // transcript can advance the generation after its delegation starts.
-        if delivery.captioned
+        if delivery.published
+            || delivery.captioned
             || (delivery.state != PendingSpeechState::AwaitingTurn
                 && delivery.input_generation != self.realtime_conversation.input_generation)
             || self.thread_id() != Some(delivery.thread_id)

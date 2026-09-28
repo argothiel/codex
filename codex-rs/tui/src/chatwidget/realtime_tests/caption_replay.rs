@@ -159,7 +159,6 @@ async fn accepted_voice_answer_with_only_an_old_caption_is_preserved_immediately
     let AppCommand::RealtimeConversationSpeech { delivery_id, .. } = ops.try_recv().unwrap() else {
         panic!("completed voice turn should queue speech");
     };
-    while events.try_recv().is_ok() {}
     chat.accept_realtime_speech(delivery_id);
     assert!(!chat.has_pending_realtime_speech(delivery_id));
     chat.realtime_conversation.assistant_transcript_generation =
@@ -208,7 +207,6 @@ async fn unrelated_caption_started_before_speech_queue_keeps_answer_fallback() {
     let AppCommand::RealtimeConversationSpeech { delivery_id, .. } = ops.try_recv().unwrap() else {
         panic!("completed voice turn should queue speech");
     };
-    while events.try_recv().is_ok() {}
     chat.accept_realtime_speech(delivery_id);
     chat.on_realtime_transcript_done("assistant".into(), "Unrelated caption".into());
     assert!(chat.realtime_conversation.pending_speech.is_empty());
@@ -253,7 +251,6 @@ async fn done_only_caption_cannot_retire_a_newer_voice_answer() {
     let AppCommand::RealtimeConversationSpeech { delivery_id, .. } = ops.try_recv().unwrap() else {
         panic!("completed voice turn should queue speech");
     };
-    while events.try_recv().is_ok() {}
     chat.accept_realtime_speech(delivery_id);
     assert!(
         chat.realtime_conversation
@@ -307,7 +304,6 @@ async fn captioned_voice_answer_does_not_duplicate_on_close() {
     let AppCommand::RealtimeConversationSpeech { delivery_id, .. } = ops.try_recv().unwrap() else {
         panic!("completed voice turn should queue speech");
     };
-    while events.try_recv().is_ok() {}
     // A delta establishes which input generation owns the completed caption.
     chat.on_realtime_transcript_delta("assistant".into(), "Captioned ".into());
     chat.on_realtime_transcript_done("assistant".into(), "Captioned answer".into());
@@ -318,6 +314,12 @@ async fn captioned_voice_answer_does_not_duplicate_on_close() {
     commit_realtime_history_events(&mut chat, &mut events);
     while let Ok(event) = events.try_recv() {
         if let AppEvent::InsertHistoryCell(cell) = event {
+            if cell
+                .as_any()
+                .is::<crate::history_cell::FinalMessageSeparator>()
+            {
+                continue;
+            }
             rendered.extend(
                 cell.display_lines(/*width*/ 80)
                     .into_iter()

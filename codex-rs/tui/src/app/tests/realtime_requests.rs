@@ -1226,7 +1226,6 @@ async fn rejected_realtime_speech_restores_the_delegated_final_answer() -> Resul
         AppCommand::RealtimeConversationSpeech { delivery_id, .. } => *delivery_id,
         _ => unreachable!("voice completion queues speech"),
     };
-    while events.try_recv().is_ok() {}
     let mut tui = crate::tui::test_support::make_test_tui()?;
     Box::pin(app.handle_event(&mut tui, &mut app_server, AppEvent::CodexOp(speech))).await?;
     assert_eq!(
@@ -1238,6 +1237,12 @@ async fn rejected_realtime_speech_restores_the_delegated_final_answer() -> Resul
     let mut rendered = Vec::new();
     while let Ok(event) = events.try_recv() {
         if let AppEvent::InsertHistoryCell(cell) = event {
+            if cell
+                .as_any()
+                .is::<crate::history_cell::FinalMessageSeparator>()
+            {
+                continue;
+            }
             let lines = cell
                 .display_lines(/*width*/ 80)
                 .into_iter()

@@ -24,6 +24,21 @@ use wiremock::matchers::path;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delegated_core_events_keep_private_output_hidden_and_deliver_final_speech() -> Result<()> {
+    delegated_handoff(DeliveryView::Background).await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn completed_answer_is_visible_before_speech_acknowledgment() -> Result<()> {
+    delegated_handoff(DeliveryView::Foreground).await
+}
+
+#[derive(Clone, Copy)]
+enum DeliveryView {
+    Background,
+    Foreground,
+}
+
+async fn delegated_handoff(delivery_view: DeliveryView) -> Result<()> {
     core_test_support::skip_if_no_network!(Ok(()));
 
     let mut commentary =
@@ -186,6 +201,26 @@ async fn delegated_core_events_keep_private_output_hidden_and_deliver_final_spee
         matches!(&speech, Op::RealtimeConversationSpeech { text, .. } if text.as_str() == "[ANALYSIS] is the marker you asked about."),
         "unexpected speech: {speech:?}"
     );
+    if matches!(delivery_view, DeliveryView::Foreground) {
+        app.select_agent_thread(&mut tui, &mut app_server, thread_id)
+            .await?;
+        while let Ok(event) = app_events.try_recv() {
+            app.handle_event(&mut tui, &mut app_server, event).await?;
+        }
+        let answers = app
+            .transcript_cells
+            .iter()
+            .flat_map(|cell| cell.display_lines(/*width*/ 100))
+            .filter(|line| {
+                line.to_string()
+                    .contains("[ANALYSIS] is the marker you asked about.")
+            })
+            .count();
+        assert_eq!(
+            answers, 1,
+            "the answer must be visible before submitting speech"
+        );
+    }
     app.handle_event(&mut tui, &mut app_server, AppEvent::CodexOp(speech))
         .await?;
     assert_eq!(
@@ -204,7 +239,13 @@ async fn delegated_core_events_keep_private_output_hidden_and_deliver_final_spee
             "channel": "speakable"
         })
     );
-    assert_eq!(app.chat_widget.thread_id(), Some(other_id));
+    assert_eq!(
+        app.chat_widget.thread_id(),
+        Some(match delivery_view {
+            DeliveryView::Background => other_id,
+            DeliveryView::Foreground => thread_id,
+        })
+    );
     assert_eq!(app.voice_owner_thread_id(), Some(thread_id));
     app.select_agent_thread(&mut tui, &mut app_server, thread_id)
         .await?;

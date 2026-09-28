@@ -835,6 +835,7 @@ pub(crate) enum TurnAbortReason {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ThreadItemRenderSource {
     Live,
+    RealtimeAnswer,
     Replay(ReplayKind),
 }
 
@@ -845,7 +846,7 @@ impl ThreadItemRenderSource {
 
     fn replay_kind(self) -> Option<ReplayKind> {
         match self {
-            Self::Live => None,
+            Self::Live | Self::RealtimeAnswer => None,
             Self::Replay(replay_kind) => Some(replay_kind),
         }
     }

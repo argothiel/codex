@@ -79,10 +79,7 @@ impl ChatWidget {
                 .any(|pending| {
                     pending.input_generation != self.realtime_conversation.input_generation
                         && !pending.captioned
-                        && matches!(
-                            pending.state,
-                            PendingSpeechState::Queued(_) | PendingSpeechState::Accepted
-                        )
+                        && matches!(pending.state, PendingSpeechState::Queued(_))
                 })
             || self.realtime_conversation.speaker_level > 0
             || self

@@ -30,7 +30,7 @@ impl ChatWidget {
             .realtime_conversation
             .pending_speech
             .iter()
-            .filter(|pending| !pending.captioned)
+            .filter(|pending| !pending.published && !pending.captioned)
             .cloned()
             .collect();
         self.realtime_conversation
