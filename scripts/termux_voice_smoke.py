@@ -8,6 +8,22 @@ from pathlib import Path
 import select
 import struct
 import subprocess
+import time
+
+RESPONSE_TIMEOUT = 30
+
+
+def read_exact(stream, size, deadline):
+    data = bytearray()
+    while len(data) < size:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not select.select([stream], [], [], remaining)[0]:
+            raise RuntimeError("helper response timed out")
+        chunk = os.read(stream.fileno(), size - len(data))
+        if not chunk:
+            raise RuntimeError("helper closed output before completing its response")
+        data.extend(chunk)
+    return bytes(data)
 
 
 def main():
@@ -32,7 +48,7 @@ def main():
         GST_REGISTRY="/dev/null", GST_REGISTRY_UPDATE="no", GST_REGISTRY_FORK="no"
     )
     commit = subprocess.check_output(
-        [str(helper), "--build-commit"], env=env, text=True
+        [str(helper), "--build-commit"], env=env, text=True, timeout=RESPONSE_TIMEOUT
     ).strip()
     with subprocess.Popen(
         [str(helper)],
@@ -51,15 +67,12 @@ def main():
                 payload = json.dumps(message).encode()
                 process.stdin.write(struct.pack(">I", len(payload)) + payload)
                 process.stdin.flush()
-                if not select.select([process.stdout], [], [], 30)[0]:
-                    raise RuntimeError("helper response timed out")
-                header = process.stdout.read(4)
-                if len(header) != 4:
-                    raise RuntimeError(f"helper closed output; status={process.poll()}")
+                deadline = time.monotonic() + RESPONSE_TIMEOUT
+                header = read_exact(process.stdout, 4, deadline)
                 size = struct.unpack(">I", header)[0]
                 if size > 128 * 1024:
                     raise RuntimeError("oversized helper response")
-                response = json.loads(process.stdout.read(size))
+                response = json.loads(read_exact(process.stdout, size, deadline))
                 if response != {"type": expected}:
                     raise RuntimeError(f"unexpected response to {message['type']}")
                 print(expected, flush=True)

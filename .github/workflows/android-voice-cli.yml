@@ -53,6 +53,9 @@ jobs:
           restore-keys: |
             voice-tui-tests-1.95-${{ hashFiles('codex-rs/Cargo.lock') }}-
 
+      - name: Test voice helper diagnostics
+        run: python3 -m unittest discover -s scripts -p test_termux_voice_smoke.py
+
       - name: Check Rust formatting
         working-directory: codex-rs
         run: cargo fmt -p codex-tui -- --check --config imports_granularity=Item
