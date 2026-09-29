@@ -3,6 +3,7 @@
 //! Interleaved speakers retain separate displays so settled caption text never reanimates.
 
 mod recording_controls;
+mod speech_history;
 mod transcript_replay;
 
 use super::ChatWidget;
@@ -61,6 +62,7 @@ const INTERRUPTION_ACKNOWLEDGMENT: Duration = Duration::from_millis(400);
 static NEXT_REALTIME_ATTEMPT_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_REALTIME_SPEECH_DELIVERY_ID: AtomicU64 = AtomicU64::new(1);
 
+#[derive(Clone)]
 struct PendingRealtimeSpeech {
     state: PendingSpeechState,
     captioned: bool,
@@ -77,7 +79,7 @@ pub(crate) struct RealtimeTranscriptRecord {
     pub(crate) before_turn_id: Option<String>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PendingSpeechState {
     AwaitingTurn,
     Queued(u64),
@@ -174,6 +176,7 @@ pub(super) struct RealtimeConversationUiState {
     delegated_reasoning_turns: VecDeque<String>,
     pub(super) agent_items: HashMap<(String, String), RealtimeAgentItemOrigin>,
     pending_speech: VecDeque<PendingRealtimeSpeech>,
+    rendered_speech: VecDeque<speech_history::RenderedSpeech>,
 }
 
 impl RealtimeConversationUiState {
@@ -1096,21 +1099,24 @@ impl ChatWidget {
     }
 
     pub(crate) fn accept_realtime_speech(&mut self, delivery_id: u64) {
-        if let Some(index) = self
+        let delivery = self
             .realtime_conversation
             .pending_speech
-            .iter()
-            .position(|delivery| delivery.state == PendingSpeechState::Queued(delivery_id))
-            && let Some(mut delivery) = self.realtime_conversation.pending_speech.remove(index)
-        {
-            delivery.state = PendingSpeechState::Accepted;
-            // Acceptance confirms queueing, not audible delivery. Preserve the
-            // answer in history now unless its exact caption already did so.
-            // Voice may paraphrase it, so waiting for a matching caption leaves
-            // accepted answers in the recovery queue until overflow replays them
-            // many turns later. Failed RPCs still use the recovery path below.
+            .iter_mut()
+            .find(|delivery| delivery.state == PendingSpeechState::Queued(delivery_id))
+            .map(|delivery| {
+                let undelivered = delivery.clone();
+                delivery.state = PendingSpeechState::Accepted;
+                undelivered
+            });
+        if let Some(delivery) = delivery {
             self.restore_realtime_speech(delivery);
         }
+        self.realtime_conversation
+            .pending_speech
+            .retain(|delivery| {
+                delivery.state != PendingSpeechState::Accepted || !delivery.captioned
+            });
     }
 
     pub(crate) fn restore_undelivered_realtime_speech(&mut self, delivery_id: u64) {
@@ -1126,12 +1132,17 @@ impl ChatWidget {
     }
 
     fn restore_realtime_speech(&mut self, delivery: PendingRealtimeSpeech) {
-        if delivery.captioned {
+        if delivery.state == PendingSpeechState::Accepted || delivery.captioned {
             return;
         }
         if self.thread_id() != Some(delivery.thread_id) {
             return;
         }
+        self.remember_rendered_realtime_answer(
+            &delivery.turn_id,
+            &delivery.item,
+            delivery.input_generation,
+        );
         self.forget_realtime_turn_origin(&delivery.turn_id);
         self.handle_thread_item(
             delivery.item,
@@ -1335,6 +1346,7 @@ impl ChatWidget {
     }
 
     pub(super) fn on_realtime_transcript_done(&mut self, role: String, mut text: String) {
+        let already_rendered = role == "assistant" && self.is_rendered_realtime_speech(&text);
         if matches!(
             self.realtime_conversation.phase,
             RealtimeConversationPhase::Inactive | RealtimeConversationPhase::Stopping
@@ -1359,7 +1371,7 @@ impl ChatWidget {
                 self.realtime_conversation.interleaved_transcript_cell = None;
                 self.bump_active_cell_revision();
             }
-            if text.trim().is_empty() {
+            if already_rendered || text.trim().is_empty() {
                 if let Some(index) = self
                     .realtime_conversation
                     .accepted_transcripts
@@ -1535,7 +1547,7 @@ impl ChatWidget {
         if role == "user" {
             self.realtime_conversation.latest_voice_input_fingerprint = voice_input_fingerprint;
         }
-        if !text.trim().is_empty() {
+        if !already_rendered && !text.trim().is_empty() {
             while self.realtime_conversation.accepted_transcripts.len()
                 >= MAX_PENDING_TRANSCRIPT_CELLS
             {
@@ -1814,6 +1826,8 @@ impl ChatWidget {
             .is_some();
         self.realtime_conversation = RealtimeConversationUiState {
             attempt_id: self.realtime_conversation.attempt_id,
+            input_generation: self.realtime_conversation.input_generation,
+            rendered_speech: std::mem::take(&mut self.realtime_conversation.rendered_speech),
             pending_history_cells,
             accepted_transcripts,
             delegated_reasoning_turns,

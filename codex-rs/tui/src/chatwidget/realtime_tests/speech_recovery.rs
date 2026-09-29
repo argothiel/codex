@@ -645,7 +645,10 @@ async fn paraphrased_accepted_answers_do_not_replay_after_sixteen_turns() {
         assert_eq!(rendered, vec![text]);
         chat.on_realtime_transcript_delta("assistant".into(), "Spoken summary".into());
         chat.on_realtime_transcript_done("assistant".into(), format!("Spoken summary {index}"));
-        assert!(chat.realtime_conversation.pending_speech.is_empty());
+        assert_eq!(
+            chat.realtime_conversation.pending_speech[0].state,
+            super::super::PendingSpeechState::Accepted
+        );
         delivered.push(delivery_id);
     }
     while events.try_recv().is_ok() {}
