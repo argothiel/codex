@@ -4,7 +4,6 @@
 
 use super::ChatWidget;
 use super::MAX_PENDING_SPEECH_DELIVERIES;
-use super::PendingRealtimeSpeech;
 use super::RealtimeAgentItemOrigin;
 use super::can_retain_realtime_speech;
 use super::is_private_realtime_agent_item;
@@ -64,15 +63,7 @@ impl ChatWidget {
         );
     }
 
-    pub(super) fn remember_rendered_realtime_speech(&mut self, delivery: &PendingRealtimeSpeech) {
-        self.remember_rendered_realtime_answer(
-            &delivery.turn_id,
-            &delivery.item,
-            delivery.input_generation,
-        );
-    }
-
-    fn remember_rendered_realtime_answer(
+    pub(super) fn remember_rendered_realtime_answer(
         &mut self,
         turn_id: &str,
         item: &ThreadItem,
@@ -95,11 +86,15 @@ impl ChatWidget {
     }
 
     pub(super) fn is_rendered_realtime_speech(&self, text: &str) -> bool {
+        let input_generation = self
+            .realtime_conversation
+            .assistant_transcript_generation
+            .unwrap_or(self.realtime_conversation.input_generation);
         self.realtime_conversation
             .rendered_speech
             .iter()
             .any(|record| {
-                record.input_generation == self.realtime_conversation.input_generation
+                record.input_generation == input_generation
                     && record
                         .text
                         .trim()

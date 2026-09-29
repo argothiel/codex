@@ -83,10 +83,11 @@ pub(crate) struct RealtimeTranscriptRecord {
     pub(crate) before_turn_id: Option<String>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PendingSpeechState {
     AwaitingTurn,
     Queued(u64),
+    Accepted,
 }
 
 fn can_retain_realtime_speech(turn_id: &str, item: &ThreadItem) -> bool {
@@ -1123,9 +1124,19 @@ impl ChatWidget {
     }
 
     pub(crate) fn accept_realtime_speech(&mut self, delivery_id: u64) {
+        if let Some(delivery) = self
+            .realtime_conversation
+            .pending_speech
+            .iter_mut()
+            .find(|delivery| delivery.state == PendingSpeechState::Queued(delivery_id))
+        {
+            delivery.state = PendingSpeechState::Accepted;
+        }
         self.realtime_conversation
             .pending_speech
-            .retain(|delivery| delivery.state != PendingSpeechState::Queued(delivery_id));
+            .retain(|delivery| {
+                delivery.state != PendingSpeechState::Accepted || !delivery.captioned
+            });
     }
 
     pub(crate) fn restore_undelivered_realtime_speech(&mut self, delivery_id: u64) {
@@ -1159,7 +1170,11 @@ impl ChatWidget {
         for cell in self.take_realtime_transcript_history() {
             self.app_event_tx.send(AppEvent::InsertHistoryCell(cell));
         }
-        self.remember_rendered_realtime_speech(&delivery);
+        self.remember_rendered_realtime_answer(
+            &delivery.turn_id,
+            &delivery.item,
+            delivery.input_generation,
+        );
         self.forget_realtime_turn_origin(&delivery.turn_id);
         self.handle_thread_item(
             delivery.item,
@@ -1361,9 +1376,7 @@ impl ChatWidget {
     }
 
     pub(super) fn on_realtime_transcript_done(&mut self, role: String, mut text: String) {
-        if role == "assistant" && self.is_rendered_realtime_speech(&text) {
-            text.clear();
-        }
+        let already_rendered = role == "assistant" && self.is_rendered_realtime_speech(&text);
         if matches!(
             self.realtime_conversation.phase,
             RealtimeConversationPhase::Inactive | RealtimeConversationPhase::Stopping
@@ -1388,7 +1401,7 @@ impl ChatWidget {
                 self.realtime_conversation.interleaved_transcript_cell = None;
                 self.bump_active_cell_revision();
             }
-            if text.trim().is_empty() {
+            if already_rendered || text.trim().is_empty() {
                 if let Some(index) = self
                     .realtime_conversation
                     .accepted_transcripts
@@ -1488,7 +1501,7 @@ impl ChatWidget {
             self.realtime_conversation
                 .pending_speech
                 .retain(|delivery| {
-                    !delivery.captioned || matches!(delivery.state, PendingSpeechState::Queued(_))
+                    delivery.state != PendingSpeechState::Accepted || !delivery.captioned
                 });
         }
         if has_text
@@ -1564,7 +1577,7 @@ impl ChatWidget {
         if role == "user" {
             self.realtime_conversation.latest_voice_input_fingerprint = voice_input_fingerprint;
         }
-        if !text.trim().is_empty() {
+        if !already_rendered && !text.trim().is_empty() {
             while self.realtime_conversation.accepted_transcripts.len()
                 >= MAX_PENDING_TRANSCRIPT_CELLS
             {

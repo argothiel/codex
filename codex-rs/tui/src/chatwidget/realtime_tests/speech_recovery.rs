@@ -53,12 +53,20 @@ async fn paraphrased_voice_answers_do_not_reappear_on_overflow_or_stop() {
         else {
             panic!("completed voice turn should queue speech");
         };
+        commit_realtime_history_events(&mut chat, &mut events);
+        let visible_before_ack = history_text(&mut events);
+        assert_eq!(
+            visible_before_ack
+                .matches(&format!("Backend answer {index}"))
+                .count(),
+            1
+        );
         chat.accept_realtime_speech(delivery_id);
         let spoken = format!("Spoken paraphrase {index}");
         chat.on_realtime_transcript_delta("assistant".into(), spoken.clone());
         chat.on_realtime_transcript_done("assistant".into(), spoken);
         commit_realtime_history_events(&mut chat, &mut events);
-        last_exchange = history_text(&mut events);
+        last_exchange = format!("{visible_before_ack}\n{}", history_text(&mut events));
         assert_eq!(
             last_exchange
                 .lines()
@@ -792,71 +800,4 @@ async fn new_user_input_invalidates_already_queued_voice_speech() {
 
     chat.on_realtime_transcript_done("user".to_string(), "newer spoken message".to_string());
     assert!(!chat.is_current_realtime_attempt(thread_id, /*attempt_id*/ 4, generation));
-}
-
-#[tokio::test]
-async fn completed_answers_are_visible_before_speech_acceptance_and_do_not_replay() {
-    let (mut chat, _sender, mut events, mut ops) = make_chatwidget_manual_with_sender().await;
-    let thread_id = activate_voice(&mut chat);
-    let mut delivered = Vec::new();
-    for index in 0..=super::super::MAX_PENDING_SPEECH_DELIVERIES {
-        let turn_id = format!("paraphrased-turn-{index}");
-        start_item(
-            &mut chat,
-            thread_id,
-            &turn_id,
-            user_item("<realtime_delegation><input>question</input></realtime_delegation>"),
-        );
-        let text = format!("Canonical answer {index}");
-        let answer = agent_item(
-            &format!("answer-{index}"),
-            &text,
-            Some(MessagePhase::FinalAnswer),
-        );
-        start_item(&mut chat, thread_id, &turn_id, answer.clone());
-        complete_item(&mut chat, thread_id, &turn_id, answer.clone());
-        finish_turn(
-            &mut chat,
-            thread_id,
-            &turn_id,
-            vec![answer],
-            TurnStatus::Completed,
-        );
-        let AppCommand::RealtimeConversationSpeech { delivery_id, .. } = ops.try_recv().unwrap()
-        else {
-            panic!("completed voice turn should queue speech");
-        };
-        let rendered = std::iter::from_fn(|| events.try_recv().ok())
-            .filter_map(|event| match event {
-                AppEvent::InsertHistoryCell(cell) => Some(cell.raw_lines()),
-                _ => None,
-            })
-            .flatten()
-            .map(|line| line.to_string())
-            .filter(|line| line.starts_with("Canonical answer"))
-            .collect::<Vec<_>>();
-        assert_eq!(rendered, vec![text]);
-        chat.accept_realtime_speech(delivery_id);
-        chat.on_realtime_transcript_delta("assistant".into(), "Spoken summary".into());
-        chat.on_realtime_transcript_done("assistant".into(), format!("Spoken summary {index}"));
-        assert!(chat.realtime_conversation.pending_speech.is_empty());
-        delivered.push(delivery_id);
-    }
-    while events.try_recv().is_ok() {}
-    chat.stop_realtime_conversation();
-    chat.reset_realtime_conversation();
-    for delivery_id in delivered {
-        chat.accept_realtime_speech(delivery_id);
-        chat.restore_undelivered_realtime_speech(delivery_id);
-    }
-    let replayed = std::iter::from_fn(|| events.try_recv().ok())
-        .filter_map(|event| match event {
-            AppEvent::InsertHistoryCell(cell) => Some(cell.raw_lines()),
-            _ => None,
-        })
-        .flatten()
-        .map(|line| line.to_string())
-        .filter(|line| line.starts_with("Canonical answer"))
-        .collect::<Vec<_>>();
-    insta::assert_debug_snapshot!(replayed, @"[]");
 }

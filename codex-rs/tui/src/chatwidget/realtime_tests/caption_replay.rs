@@ -164,7 +164,7 @@ async fn accepted_voice_answer_with_only_an_old_caption_is_preserved_immediately
     chat.realtime_conversation.assistant_transcript_generation =
         Some(chat.realtime_conversation.input_generation.wrapping_sub(1));
     chat.on_realtime_transcript_done("assistant".into(), "Earlier speech".into());
-    assert!(chat.realtime_conversation.pending_speech.is_empty());
+    assert_eq!(chat.realtime_conversation.pending_speech.len(), 1);
     chat.on_realtime_conversation_closed(Some("transport_closed".into()));
     chat.restore_undelivered_realtime_speech(delivery_id);
     let mut answers = 0;
@@ -209,7 +209,7 @@ async fn unrelated_caption_started_before_speech_queue_keeps_answer_fallback() {
     };
     chat.accept_realtime_speech(delivery_id);
     chat.on_realtime_transcript_done("assistant".into(), "Unrelated caption".into());
-    assert!(chat.realtime_conversation.pending_speech.is_empty());
+    assert_eq!(chat.realtime_conversation.pending_speech.len(), 1);
     chat.on_realtime_conversation_closed(Some("transport_closed".into()));
     let restored = std::iter::from_fn(|| events.try_recv().ok())
         .filter_map(|event| match event {
@@ -258,7 +258,7 @@ async fn done_only_caption_cannot_retire_a_newer_voice_answer() {
             .is_none()
     );
     chat.on_realtime_transcript_done("assistant".into(), "Old done-only caption".into());
-    assert!(chat.realtime_conversation.pending_speech.is_empty());
+    assert_eq!(chat.realtime_conversation.pending_speech.len(), 1);
     chat.on_realtime_conversation_closed(Some("transport_closed".into()));
     let restored = std::iter::from_fn(|| events.try_recv().ok())
         .filter_map(|event| match event {
@@ -274,6 +274,49 @@ async fn done_only_caption_cannot_retire_a_newer_voice_answer() {
         .filter(|text| text.contains("New answer"))
         .count();
     assert_eq!(restored, 1);
+}
+
+#[tokio::test]
+async fn late_caption_is_deduplicated_after_the_next_voice_input_starts() {
+    let (mut chat, _sender, mut events, mut ops) = make_chatwidget_manual_with_sender().await;
+    let thread_id = activate_voice(&mut chat);
+    let turn_id = "late-caption-turn";
+    start_item(
+        &mut chat,
+        thread_id,
+        turn_id,
+        user_item("<realtime_delegation><input>first question</input></realtime_delegation>"),
+    );
+    let answer = agent_item("answer", "First answer", Some(MessagePhase::FinalAnswer));
+    start_item(&mut chat, thread_id, turn_id, answer.clone());
+    complete_item(&mut chat, thread_id, turn_id, answer.clone());
+    finish_turn(
+        &mut chat,
+        thread_id,
+        turn_id,
+        vec![answer],
+        TurnStatus::Completed,
+    );
+    let AppCommand::RealtimeConversationSpeech { delivery_id, .. } = ops.try_recv().unwrap() else {
+        panic!("completed voice turn should queue speech");
+    };
+    chat.accept_realtime_speech(delivery_id);
+    let count_answer = |events: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>| {
+        std::iter::from_fn(|| events.try_recv().ok())
+            .filter_map(|event| match event {
+                AppEvent::InsertHistoryCell(cell) => Some(cell.display_lines(/*width*/ 80)),
+                _ => None,
+            })
+            .flatten()
+            .filter(|line| line.to_string().contains("First answer"))
+            .count()
+    };
+    let mut answer_count = count_answer(&mut events);
+    chat.on_realtime_transcript_delta("assistant".into(), "First answer".into());
+    chat.on_realtime_transcript_delta("user".into(), "second question".into());
+    chat.on_realtime_transcript_done("assistant".into(), "First answer".into());
+    answer_count += count_answer(&mut events);
+    assert_eq!(answer_count, 1);
 }
 
 #[tokio::test]
@@ -387,4 +430,60 @@ async fn empty_late_completion_discards_the_restored_partial() {
     assert!(chat.realtime_conversation.live_transcript_cell.is_none());
     assert!(chat.realtime_conversation.accepted_transcripts.is_empty());
     assert!(events.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn exact_caption_retires_speech_without_muting_the_next_answer() {
+    for ack_before_caption in [true, false] {
+        let (mut chat, _sender, mut events, mut ops) = make_chatwidget_manual_with_sender().await;
+        let thread_id = activate_voice(&mut chat);
+        let turn_id = "caption-retirement";
+        start_item(
+            &mut chat,
+            thread_id,
+            turn_id,
+            user_item("<realtime_delegation><input>question</input></realtime_delegation>"),
+        );
+        let answer = agent_item("answer", "Complete answer", Some(MessagePhase::FinalAnswer));
+        start_item(&mut chat, thread_id, turn_id, answer.clone());
+        complete_item(&mut chat, thread_id, turn_id, answer.clone());
+        finish_turn(
+            &mut chat,
+            thread_id,
+            turn_id,
+            vec![answer],
+            TurnStatus::Completed,
+        );
+        let AppCommand::RealtimeConversationSpeech { delivery_id, .. } = ops.try_recv().unwrap()
+        else {
+            panic!("completed voice turn should queue speech");
+        };
+        if ack_before_caption {
+            chat.accept_realtime_speech(delivery_id);
+        }
+        chat.on_realtime_transcript_delta("assistant".into(), "Complete ".into());
+        chat.on_realtime_transcript_done("assistant".into(), "Complete answer".into());
+        if !ack_before_caption {
+            chat.accept_realtime_speech(delivery_id);
+        }
+        assert!(chat.realtime_conversation.pending_speech.is_empty());
+        chat.on_realtime_transcript_delta("user".into(), "Another question".into());
+        assert_eq!(
+            chat.realtime_conversation.speaker_suppression_generation,
+            None
+        );
+        chat.on_realtime_transcript_done("user".into(), "Another question".into());
+        chat.stop_realtime_conversation();
+        chat.reset_realtime_conversation();
+        commit_realtime_history_events(&mut chat, &mut events);
+        let answer_count = std::iter::from_fn(|| events.try_recv().ok())
+            .filter_map(|event| match event {
+                AppEvent::InsertHistoryCell(cell) => Some(cell.display_lines(/*width*/ 80)),
+                _ => None,
+            })
+            .flatten()
+            .filter(|line| line.to_string().contains("Complete answer"))
+            .count();
+        assert_eq!(answer_count, 1, "ack_before_caption={ack_before_caption}");
+    }
 }

@@ -803,6 +803,7 @@ async fn new_voice_turn_interrupts_uncaptioned_queued_speech() {
 
     for (state, captioned, expected) in [
         (PendingSpeechState::Queued(1), false, Some(1)),
+        (PendingSpeechState::Accepted, false, Some(1)),
         (PendingSpeechState::AwaitingTurn, false, None),
         (PendingSpeechState::Queued(1), true, None),
     ] {
@@ -825,6 +826,56 @@ async fn new_voice_turn_interrupts_uncaptioned_queued_speech() {
             expected
         );
     }
+}
+
+#[tokio::test]
+async fn accepted_speech_remains_interruptible_until_its_caption() {
+    let (mut chat, _sender, mut events, mut ops) = make_chatwidget_manual_with_sender().await;
+    let thread_id = activate_voice(&mut chat);
+    let turn_id = "accepted-output-turn";
+    start_item(
+        &mut chat,
+        thread_id,
+        turn_id,
+        user_item("<realtime_delegation><input>first question</input></realtime_delegation>"),
+    );
+    let answer = agent_item("answer", "First answer", Some(MessagePhase::FinalAnswer));
+    start_item(&mut chat, thread_id, turn_id, answer.clone());
+    complete_item(&mut chat, thread_id, turn_id, answer.clone());
+    finish_turn(
+        &mut chat,
+        thread_id,
+        turn_id,
+        vec![answer],
+        TurnStatus::Completed,
+    );
+    let AppCommand::RealtimeConversationSpeech { delivery_id, .. } = ops.try_recv().unwrap() else {
+        panic!("completed voice turn should queue speech");
+    };
+    chat.accept_realtime_speech(delivery_id);
+    assert_eq!(
+        chat.realtime_conversation.pending_speech[0].state,
+        super::super::PendingSpeechState::Accepted
+    );
+    chat.on_realtime_transcript_delta("user".into(), "next question".into());
+    assert_eq!(
+        chat.realtime_conversation.speaker_suppression_generation,
+        Some(chat.realtime_conversation.input_generation)
+    );
+    chat.on_realtime_transcript_done("user".into(), "next question".into());
+    chat.stop_realtime_conversation();
+    chat.reset_realtime_conversation();
+    chat.restore_undelivered_realtime_speech(delivery_id);
+    commit_realtime_history_events(&mut chat, &mut events);
+    let answer_count = std::iter::from_fn(|| events.try_recv().ok())
+        .filter_map(|event| match event {
+            AppEvent::InsertHistoryCell(cell) => Some(cell.display_lines(/*width*/ 80)),
+            _ => None,
+        })
+        .flatten()
+        .filter(|line| line.to_string().contains("First answer"))
+        .count();
+    assert_eq!(answer_count, 1);
 }
 
 #[tokio::test]
