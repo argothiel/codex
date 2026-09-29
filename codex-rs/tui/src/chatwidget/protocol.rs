@@ -452,6 +452,7 @@ impl ChatWidget {
                 if replay_kind.is_none()
                     && let Some((item, _, _)) = &last_agent_message
                 {
+                    self.publish_completed_realtime_delegation(&notification.turn.id, item);
                     self.speak_completed_realtime_delegation(&notification.turn.id, item);
                 }
                 self.last_non_retry_error = None;

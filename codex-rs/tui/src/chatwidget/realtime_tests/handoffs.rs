@@ -164,7 +164,6 @@ async fn delegation_started_before_peer_connection_keeps_its_voice_origin() {
                 .iter()
                 .map(ToString::to_string)
                 .collect::<String>();
-            assert!(!rendered.contains("Spoken answer"));
             assert!(!rendered.contains("<realtime_delegation>"));
             rendered_history.push(rendered);
         }

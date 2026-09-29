@@ -1,6 +1,8 @@
 //! TUI orchestration for an app-server-signaled, locally owned WebRTC voice session.
 //! Completed captions and both speakers' partials stay bounded across widget replacement.
 //! Interleaved speakers retain separate displays so settled caption text never reanimates.
+//! Speech recovery suppresses stale queued answers while preserving unspoken text fallbacks.
+//! Completed turns publish their full answer independently of speech queueing or playback.
 
 mod recording_controls;
 mod speech_history;
@@ -66,6 +68,7 @@ static NEXT_REALTIME_SPEECH_DELIVERY_ID: AtomicU64 = AtomicU64::new(1);
 struct PendingRealtimeSpeech {
     state: PendingSpeechState,
     captioned: bool,
+    published: bool,
     input_generation: u64,
     thread_id: ThreadId,
     turn_id: String,
@@ -809,7 +812,16 @@ impl ChatWidget {
         if questions.is_some() {
             return false;
         }
-        if from_replay || !self.is_realtime_delegated_agent_item(turn_id, item_id) {
+        if from_replay {
+            return self
+                .realtime_conversation
+                .pending_speech
+                .iter()
+                .any(|pending| {
+                    !pending.published && pending.turn_id == turn_id && pending.item.id() == item_id
+                });
+        }
+        if !self.is_realtime_delegated_agent_item(turn_id, item_id) {
             return false;
         }
         let Some(RealtimeAgentItemOrigin::Delegated {
@@ -868,6 +880,7 @@ impl ChatWidget {
             .push_back(PendingRealtimeSpeech {
                 state: PendingSpeechState::AwaitingTurn,
                 captioned: false,
+                published: false,
                 input_generation,
                 thread_id,
                 turn_id: turn_id.to_string(),
@@ -938,11 +951,6 @@ impl ChatWidget {
         {
             self.remove_waiting_realtime_speech(turn_id, item_id);
             self.finish_realtime_turn(turn_id);
-            self.handle_thread_item(
-                item.clone(),
-                turn_id.to_string(),
-                super::ThreadItemRenderSource::Live,
-            );
             return;
         }
         let delivery_id = NEXT_REALTIME_SPEECH_DELIVERY_ID.fetch_add(1, Ordering::Relaxed);
@@ -968,6 +976,7 @@ impl ChatWidget {
                     .push_back(PendingRealtimeSpeech {
                         state: PendingSpeechState::AwaitingTurn,
                         captioned: false,
+                        published: true,
                         input_generation,
                         thread_id,
                         turn_id: turn_id.to_string(),
@@ -1006,10 +1015,15 @@ impl ChatWidget {
     pub(crate) fn take_undelivered_realtime_speech_for_replay(
         &mut self,
     ) -> Vec<(ThreadId, String, ThreadItem)> {
+        let input_generation = self.realtime_conversation.input_generation;
         self.realtime_conversation
             .pending_speech
             .drain(..)
-            .filter(|delivery| !delivery.captioned)
+            .filter(|delivery| {
+                !delivery.captioned
+                    && (delivery.state == PendingSpeechState::AwaitingTurn
+                        || delivery.input_generation == input_generation)
+            })
             .map(|delivery| (delivery.thread_id, delivery.turn_id, delivery.item))
             .collect()
     }
@@ -1099,18 +1113,13 @@ impl ChatWidget {
     }
 
     pub(crate) fn accept_realtime_speech(&mut self, delivery_id: u64) {
-        let delivery = self
+        if let Some(delivery) = self
             .realtime_conversation
             .pending_speech
             .iter_mut()
             .find(|delivery| delivery.state == PendingSpeechState::Queued(delivery_id))
-            .map(|delivery| {
-                let undelivered = delivery.clone();
-                delivery.state = PendingSpeechState::Accepted;
-                undelivered
-            });
-        if let Some(delivery) = delivery {
-            self.restore_realtime_speech(delivery);
+        {
+            delivery.state = PendingSpeechState::Accepted;
         }
         self.realtime_conversation
             .pending_speech
@@ -1132,11 +1141,20 @@ impl ChatWidget {
     }
 
     fn restore_realtime_speech(&mut self, delivery: PendingRealtimeSpeech) {
-        if delivery.state == PendingSpeechState::Accepted || delivery.captioned {
+        // Do not append old queued speech under a newer question. An answer that
+        // never reached speech still needs its text fallback: a delayed user
+        // transcript can advance the generation after its delegation starts.
+        if delivery.published
+            || delivery.captioned
+            || (delivery.state != PendingSpeechState::AwaitingTurn
+                && delivery.input_generation != self.realtime_conversation.input_generation)
+            || self.thread_id() != Some(delivery.thread_id)
+        {
             return;
         }
-        if self.thread_id() != Some(delivery.thread_id) {
-            return;
+        // Preserve the spoken question's position before inserting its full answer.
+        for cell in self.take_realtime_transcript_history() {
+            self.app_event_tx.send(AppEvent::InsertHistoryCell(cell));
         }
         self.remember_rendered_realtime_answer(
             &delivery.turn_id,
@@ -1174,13 +1192,7 @@ impl ChatWidget {
         }
         self.forget_realtime_turn_origin(turn_id);
         for delivery in waiting {
-            if self.thread_id() == Some(delivery.thread_id) {
-                self.handle_thread_item(
-                    delivery.item,
-                    delivery.turn_id,
-                    super::ThreadItemRenderSource::Live,
-                );
-            }
+            self.restore_realtime_speech(delivery);
         }
     }
 
@@ -1471,7 +1483,7 @@ impl ChatWidget {
             self.realtime_conversation
                 .pending_speech
                 .retain(|delivery| {
-                    !delivery.captioned || matches!(delivery.state, PendingSpeechState::Queued(_))
+                    delivery.state != PendingSpeechState::Accepted || !delivery.captioned
                 });
         }
         if has_text

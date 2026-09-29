@@ -299,18 +299,20 @@ impl ChatWidget {
                 questions,
                 ..
             } => {
-                if self.complete_realtime_delegated_agent_item(
-                    &turn_id,
-                    &ThreadItem::AgentMessage {
-                        id: id.clone(),
-                        text: text.clone(),
-                        phase: phase.clone(),
-                        memory_citation: memory_citation.clone(),
-                        delivery,
-                        questions: questions.clone(),
-                    },
-                    from_replay,
-                ) {
+                if !matches!(render_source, ThreadItemRenderSource::RealtimeAnswer)
+                    && self.complete_realtime_delegated_agent_item(
+                        &turn_id,
+                        &ThreadItem::AgentMessage {
+                            id: id.clone(),
+                            text: text.clone(),
+                            phase: phase.clone(),
+                            memory_citation: memory_citation.clone(),
+                            delivery,
+                            questions: questions.clone(),
+                        },
+                        from_replay,
+                    )
+                {
                     return;
                 }
                 self.on_agent_message_item_completed(

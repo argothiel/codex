@@ -173,6 +173,22 @@ async fn delegated_core_events_keep_private_output_hidden_and_deliver_final_spee
         matches!(&speech, Op::RealtimeConversationSpeech { text, .. } if text.as_str() == "[ANALYSIS] is the marker you asked about."),
         "unexpected speech: {speech:?}"
     );
+    while let Ok(event) = app_events.try_recv() {
+        app.handle_event(&mut tui, &mut app_server, event).await?;
+    }
+    let answers = app
+        .transcript_cells
+        .iter()
+        .flat_map(|cell| cell.display_lines(/*width*/ 100))
+        .filter(|line| {
+            line.to_string()
+                .contains("[ANALYSIS] is the marker you asked about.")
+        })
+        .count();
+    assert_eq!(
+        answers, 1,
+        "the answer must be visible before submitting speech"
+    );
     app.handle_event(&mut tui, &mut app_server, AppEvent::CodexOp(speech))
         .await?;
     assert_eq!(

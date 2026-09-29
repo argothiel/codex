@@ -247,7 +247,7 @@ async fn stalled_voice_stop_leaves_time_for_shutdown_unsubscribe() -> Result<()>
 
 #[tokio::test]
 async fn switching_agent_threads_stops_backend_voice_once_through_app_server() -> Result<()> {
-    let (mut app, _events, mut ops) = make_test_app_with_channels().await;
+    let (mut app, mut events, mut ops) = make_test_app_with_channels().await;
     let (mut app_server, requests, proxy) = start_recording_realtime_speech_app_server(
         &app.config,
         RealtimeRequestBehavior::AcceptSpeech,
@@ -336,12 +336,27 @@ async fn switching_agent_threads_stops_backend_voice_once_through_app_server() -
     );
     let mut tui = crate::tui::test_support::make_test_tui()?;
 
+    while let Ok(event) = events.try_recv() {
+        app.handle_event(&mut tui, &mut app_server, event).await?;
+    }
+    let answers = app
+        .transcript_cells
+        .iter()
+        .flat_map(|cell| cell.display_lines(/*width*/ 80))
+        .filter(|line| {
+            line.to_string()
+                .contains("Answer to preserve after switching.")
+        })
+        .count();
+    assert_eq!(answers, 1);
+
     Box::pin(app.select_agent_thread(&mut tui, &mut app_server, target)).await?;
 
     assert_eq!(app.chat_widget.thread_id(), Some(target));
     assert_eq!(
-        app.pending_realtime_speech_replay[&source],
-        vec![(turn_id.into(), answer)]
+        app.pending_realtime_speech_replay.get(&source),
+        None,
+        "speech for an older input must not replay after switching"
     );
     assert_eq!(app.pending_realtime_transcript_replay[&source].len(), 1);
     assert_eq!(
@@ -1161,7 +1176,6 @@ async fn rejected_realtime_speech_restores_the_delegated_final_answer() -> Resul
         AppCommand::RealtimeConversationSpeech { delivery_id, .. } => *delivery_id,
         _ => unreachable!("voice completion queues speech"),
     };
-    while events.try_recv().is_ok() {}
     let mut tui = crate::tui::test_support::make_test_tui()?;
     Box::pin(app.handle_event(&mut tui, &mut app_server, AppEvent::CodexOp(speech))).await?;
     assert_eq!(
@@ -1173,6 +1187,12 @@ async fn rejected_realtime_speech_restores_the_delegated_final_answer() -> Resul
     let mut rendered = Vec::new();
     while let Ok(event) = events.try_recv() {
         if let AppEvent::InsertHistoryCell(cell) = event {
+            if cell
+                .as_any()
+                .is::<crate::history_cell::FinalMessageSeparator>()
+            {
+                continue;
+            }
             let lines = cell
                 .display_lines(/*width*/ 80)
                 .into_iter()

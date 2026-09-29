@@ -805,7 +805,7 @@ async fn new_voice_turn_interrupts_uncaptioned_queued_speech() {
         (PendingSpeechState::Queued(1), false, Some(1)),
         (PendingSpeechState::Accepted, false, Some(1)),
         (PendingSpeechState::AwaitingTurn, false, None),
-        (PendingSpeechState::Accepted, true, None),
+        (PendingSpeechState::Queued(1), true, None),
     ] {
         let (mut chat, _sender, _events, _ops) = make_chatwidget_manual_with_sender().await;
         let thread_id = activate_voice(&mut chat);
@@ -814,6 +814,7 @@ async fn new_voice_turn_interrupts_uncaptioned_queued_speech() {
             .push_back(PendingRealtimeSpeech {
                 state,
                 captioned,
+                published: true,
                 input_generation: 0,
                 thread_id,
                 turn_id: "old-turn".into(),
