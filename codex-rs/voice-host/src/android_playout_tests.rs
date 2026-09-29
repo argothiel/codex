@@ -48,9 +48,14 @@ fn android_playout_continuity_under_capture_processing() {
     let start = Instant::now();
     let mut sequence = 0;
     let mut measured = 0;
+    let mut captured = 0;
     let mut zeros = 0;
     let mut zero_run = 0;
     let mut longest_zero_run = 0;
+    let measurement_start = start + Duration::from_millis(/*millis*/ 500);
+    let measurement_end = start + Duration::from_millis(/*millis*/ 2800);
+    let mut rendered_until = measurement_start;
+    let mut longest_callback_gap = Duration::ZERO;
     while start.elapsed() < Duration::from_millis(/*millis*/ 3200) {
         while sequence < packets.len() && start.elapsed().as_millis() >= (sequence * 20) as u128 {
             ingress
@@ -74,6 +79,12 @@ fn android_playout_continuity_under_capture_processing() {
             sequence += 1;
         }
         while let Some(frame) = devices.worker.buffers.rendered.pop() {
+            let frame_end = frame.at + Duration::from_secs_f64(frame.len as f64 / 48_000.0);
+            if frame_end > measurement_start && frame.at < measurement_end {
+                longest_callback_gap =
+                    longest_callback_gap.max(frame.at.saturating_duration_since(rendered_until));
+                rendered_until = rendered_until.max(frame_end.min(measurement_end));
+            }
             let elapsed = frame.at.saturating_duration_since(start);
             if elapsed > Duration::from_millis(/*millis*/ 500)
                 && elapsed < Duration::from_millis(/*millis*/ 2800)
@@ -100,17 +111,29 @@ fn android_playout_continuity_under_capture_processing() {
                 .processor
                 .capture(&frame, Instant::now)
                 .unwrap();
+            captured += frame.len;
         }
         devices.take_state().unwrap();
         std::thread::sleep(Duration::from_millis(/*millis*/ 5));
     }
+    longest_callback_gap =
+        longest_callback_gap.max(measurement_end.saturating_duration_since(rendered_until));
     eprintln!(
-        "playout: packets={sequence}, measured={measured}, zeros={zeros}, longest_gap_ms={}",
-        longest_zero_run as f64 / 48.0
+        "playout: packets={sequence}, measured={measured}, captured={captured}, zeros={zeros}, longest_silence_ms={}, longest_callback_gap_ms={}",
+        longest_zero_run as f64 / 48.0,
+        longest_callback_gap.as_secs_f64() * 1000.0
     );
     assert!(measured > 96_000);
     assert!(
+        captured > 48_000,
+        "capture DSP did not receive sustained audio"
+    );
+    assert!(
         longest_zero_run < 480,
         "speaker received gaps of at least 10 ms"
+    );
+    assert!(
+        longest_callback_gap < Duration::from_millis(/*millis*/ 10),
+        "speaker callbacks missed at least 10 ms of audio"
     );
 }
