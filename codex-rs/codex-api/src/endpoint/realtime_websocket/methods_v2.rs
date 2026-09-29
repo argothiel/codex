@@ -101,6 +101,7 @@ pub(super) fn session_update_session(
                         r#type: TurnDetectionType::ServerVad,
                         interrupt_response: true,
                         create_response: true,
+                        prefix_padding_ms: 800,
                         silence_duration_ms: 500,
                     }),
                 },

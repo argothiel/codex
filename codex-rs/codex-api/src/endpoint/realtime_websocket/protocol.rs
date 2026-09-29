@@ -185,6 +185,7 @@ pub(super) struct SessionTurnDetection {
     pub(super) r#type: TurnDetectionType,
     pub(super) interrupt_response: bool,
     pub(super) create_response: bool,
+    pub(super) prefix_padding_ms: u32,
     pub(super) silence_duration_ms: u32,
 }
 
