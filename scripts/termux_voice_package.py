@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGINS = (
@@ -83,8 +84,9 @@ def main():
             source = prefix / "lib" / name
             if source.is_file() and not (libraries / name).exists():
                 copy(source, libraries / name)
+    workspace = tomllib.loads((ROOT / "codex-rs/Cargo.toml").read_text())
     metadata = {
-        "version": "0.156.1",
+        "version": workspace["workspace"]["package"]["version"],
         "layoutVersion": 1,
         "entrypoint": "bin/codex",
         "resourcesDir": "codex-resources",

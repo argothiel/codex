@@ -10,8 +10,23 @@ import shutil
 import subprocess
 import sys
 import time
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def locked_v8_version():
+    cargo_lock = tomllib.loads((ROOT / "codex-rs/Cargo.lock").read_text())
+    v8_versions = {
+        package["version"]
+        for package in cargo_lock["package"]
+        if package["name"] == "v8"
+    }
+    if len(v8_versions) != 1:
+        raise RuntimeError(
+            f"expected one locked v8 version, found {sorted(v8_versions)}"
+        )
+    return v8_versions.pop()
 
 
 def main():
@@ -60,18 +75,22 @@ def main():
         }
     )
     if args.component in ("cli", "code-mode-host"):
-        artifacts = ROOT / ".artifacts/rusty_v8/rusty-v8-v150.4.0"
-        archive = (
-            artifacts / "librusty_v8_ptrcomp_sandbox_release_aarch64-linux-android.a.gz"
-        )
-        bindings = (
-            artifacts / "src_binding_ptrcomp_sandbox_release_aarch64-linux-android.rs"
-        )
-        if not archive.is_file() or not bindings.is_file():
-            parser.error("run scripts/fetch_rusty_v8_android.py first")
-        env.update(
-            RUSTY_V8_ARCHIVE=str(archive), RUSTY_V8_SRC_BINDING_PATH=str(bindings)
-        )
+        if args.component == "code-mode-host":
+            v8_version = locked_v8_version()
+            artifacts = ROOT / ".artifacts/rusty_v8" / f"rusty-v8-v{v8_version}"
+            archive = (
+                artifacts
+                / "librusty_v8_ptrcomp_sandbox_release_aarch64-linux-android.a.gz"
+            )
+            bindings = (
+                artifacts
+                / "src_binding_ptrcomp_sandbox_release_aarch64-linux-android.rs"
+            )
+            if not archive.is_file() or not bindings.is_file():
+                parser.error("run scripts/fetch_rusty_v8_android.py first")
+            env.update(
+                RUSTY_V8_ARCHIVE=str(archive), RUSTY_V8_SRC_BINDING_PATH=str(bindings)
+            )
         cpp = prefix / "lib/node_modules/@mmmbuto/codex-cli-termux/bin/libc++_shared.so"
         if not cpp.is_file():
             parser.error(
