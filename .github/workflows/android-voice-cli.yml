@@ -3,11 +3,12 @@ name: Android voice CLI
 on:
   workflow_dispatch:
   push:
-    branches: [android-voice]
+    branches: [termux]
     paths:
       - codex-rs/**
       - third_party/**
       - .github/workflows/android-voice-cli.yml
+      - scripts/**
 
 permissions:
   contents: read

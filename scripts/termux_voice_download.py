@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("run_id", type=int)
-    parser.add_argument("--repo", default="argothiel/codex-termux")
+    parser.add_argument("--repo", default="argothiel/codex")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     run = str(args.run_id)
