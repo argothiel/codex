@@ -155,18 +155,27 @@ async fn delegated_handoff(delivery_view: DeliveryView) -> Result<()> {
         .thread_realtime_append_speech(thread_id, "fixture prompt".to_string())
         .await?;
 
-    // Keep the real Core delegation running while another session is visible.
-    let other = app_server.start_thread(&app.config).await?;
-    let other_id = other.session.thread_id;
-    app.replace_chat_widget_with_app_server_thread(
-        &mut tui,
-        other,
-        super::super::session_lifecycle::ThreadAttachPresentation::Fresh,
-        /*initial_user_message*/ None,
-    )
-    .await?;
+    let other_id = match delivery_view {
+        DeliveryView::Background => {
+            // Keep the real Core delegation running while another session is visible.
+            let other = app_server.start_thread(&app.config).await?;
+            let other_id = other.session.thread_id;
+            app.replace_chat_widget_with_app_server_thread(
+                &mut tui,
+                other,
+                super::super::session_lifecycle::ThreadAttachPresentation::Fresh,
+                /*initial_user_message*/ None,
+            )
+            .await?;
+            Some(other_id)
+        }
+        DeliveryView::Foreground => None,
+    };
     assert_eq!(app.voice_owner_thread_id(), Some(thread_id));
-    assert_eq!(app.chat_widget.thread_id(), Some(other_id));
+    assert_eq!(
+        app.chat_widget.thread_id(),
+        Some(other_id.unwrap_or(thread_id))
+    );
 
     let mut rendered = Vec::new();
     let speech = timeout(Duration::from_secs(15), async {
@@ -202,8 +211,6 @@ async fn delegated_handoff(delivery_view: DeliveryView) -> Result<()> {
         "unexpected speech: {speech:?}"
     );
     if matches!(delivery_view, DeliveryView::Foreground) {
-        app.select_agent_thread(&mut tui, &mut app_server, thread_id)
-            .await?;
         while let Ok(event) = app_events.try_recv() {
             app.handle_event(&mut tui, &mut app_server, event).await?;
         }
@@ -242,7 +249,7 @@ async fn delegated_handoff(delivery_view: DeliveryView) -> Result<()> {
     assert_eq!(
         app.chat_widget.thread_id(),
         Some(match delivery_view {
-            DeliveryView::Background => other_id,
+            DeliveryView::Background => other_id.expect("background view has another thread"),
             DeliveryView::Foreground => thread_id,
         })
     );
@@ -250,6 +257,12 @@ async fn delegated_handoff(delivery_view: DeliveryView) -> Result<()> {
     app.select_agent_thread(&mut tui, &mut app_server, thread_id)
         .await?;
     assert!(app.chat_widget.realtime_conversation_is_running());
+    rendered.extend(
+        app.transcript_cells
+            .iter()
+            .flat_map(|cell| cell.display_lines(/*width*/ 80))
+            .map(|line| line.to_string()),
+    );
     let rendered = rendered.join("\n");
     assert!(!rendered.contains("PRIVATE REASONING"), "{rendered}");
     assert!(!rendered.contains("PRIVATE COMMENTARY"), "{rendered}");
